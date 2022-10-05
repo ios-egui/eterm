@@ -1,12 +1,13 @@
+use crate::{
+    messages::{into_clipped_net_meshes, ClippedNetMesh},
+    ClientToServerMessage,
+};
+use anyhow::Context as _;
+use egui::{epaint::Primitive, ClippedPrimitive, Mesh, RawInput};
 use std::{
     collections::HashMap,
     net::{SocketAddr, TcpListener},
 };
-
-use anyhow::Context as _;
-use egui::RawInput;
-
-use crate::{net_shape::ClippedNetShape, ClientToServerMessage};
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub struct ClientId(u64);
@@ -47,11 +48,11 @@ impl Server {
     ///
     /// # Errors
     /// Underlying TCP errors.
-    pub fn show(&mut self, mut do_ui: impl FnMut(&egui::CtxRef, ClientId)) -> anyhow::Result<()> {
+    pub fn show(&mut self, mut do_ui: impl FnMut(&egui::Context, ClientId)) -> anyhow::Result<()> {
         self.show_dyn(&mut do_ui)
     }
 
-    fn show_dyn(&mut self, do_ui: &mut dyn FnMut(&egui::CtxRef, ClientId)) -> anyhow::Result<()> {
+    fn show_dyn(&mut self, do_ui: &mut dyn FnMut(&egui::Context, ClientId)) -> anyhow::Result<()> {
         self.accept_new_clients()?;
         self.try_receive();
 
@@ -86,7 +87,8 @@ impl Server {
                             start_time: std::time::Instant::now(),
                             frame_index: 0,
                             egui_ctx: Default::default(),
-                            input: None,
+                            new_input: None,
+                            prev_input: None,
                             client_time: None,
                             last_update: None,
                             last_visuals: Default::default(),
@@ -94,8 +96,6 @@ impl Server {
                     });
 
                     client.tcp_endpoint = Some(tcp_endpoint);
-
-                    // TODO: send egui::FontDefinitions to client
 
                     tracing::info!("{} connected", client.info());
                 }
@@ -126,13 +126,14 @@ struct Client {
     tcp_endpoint: Option<crate::TcpEndpoint>,
     start_time: std::time::Instant,
     frame_index: u64,
-    egui_ctx: egui::CtxRef,
+    egui_ctx: egui::Context,
     /// Set when there is something to do. Cleared after painting.
-    input: Option<egui::RawInput>,
+    new_input: Option<egui::RawInput>,
+    prev_input: Option<egui::RawInput>,
     /// The client time of the last input we got from them.
     client_time: Option<f64>,
     last_update: Option<std::time::Instant>,
-    last_visuals: Vec<ClippedNetShape>,
+    last_visuals: Vec<ClippedNetMesh>,
 }
 
 impl Client {
@@ -143,68 +144,101 @@ impl Client {
 
     fn show(
         &mut self,
-        do_ui: &mut dyn FnMut(&egui::CtxRef, ClientId),
+        do_ui: &mut dyn FnMut(&egui::Context, ClientId),
         minimum_update_interval: f32,
     ) {
+        // don't do anything if there are no clients
         if self.tcp_endpoint.is_none() {
             return;
         }
 
+        // Take most recently received client time (from Client)
         let client_time = self.client_time.take();
 
-        let mut input = match self.input.take() {
-            Some(input) => input,
-            None => {
-                let time_since_last_update =
-                    self.last_update.map_or(f32::INFINITY, |last_update| {
-                        last_update.elapsed().as_secs_f32()
-                    });
-                if time_since_last_update > minimum_update_interval {
-                    Default::default()
-                } else {
-                    return;
-                }
-            }
+        // Time since last update
+        let time_since_last_update = if let Some(instant) = self.last_update {
+            instant.elapsed().as_secs_f32()
+        } else {
+            f32::INFINITY
         };
 
+        // Are we forced to update? Or can we wait?
+        let can_wait = time_since_last_update < minimum_update_interval;
+
+        if self.new_input.is_none() {
+            // no new user input available - skip this iteration if we can wait
+            if can_wait {
+                //eprint!("skip, ");
+                return;
+            } else {
+                //eprint!("refresh event");
+                return;
+            }
+        } else {
+            //eprint!("input event");
+        }
+        //self.prev_input = self.new_input.clone();
+
+        // Use cached input from client if available
+        let mut input = self.new_input.take().unwrap();
+        input.pixels_per_point = Some(2.0);
+        //eprintln!("Received input: {:?}", input);
+
+        // Reset instant of last update
         self.last_update = Some(std::time::Instant::now());
 
-        // Ignore client time:
+        // Override client time with server time
         input.time = Some(self.start_time.elapsed().as_secs_f64());
 
-        let (mut output, clipped_shapes) = self
+        // refresh egui
+        let full_output = self
             .egui_ctx
             .run(input, |egui_ctx| do_ui(egui_ctx, self.client_id));
 
-        let clipped_net_shapes = crate::net_shape::to_clipped_net_shapes(clipped_shapes);
+        // convert shapes to network friendly shapes
+        //let clipped_shapes = &full_output.shapes;
+        //let clipped_net_shapes = crate::net_shape::to_clipped_net_shapes(clipped_shapes.clone());
 
-        let needs_repaint = output.needs_repaint;
-        output.needs_repaint = false; // so we can compare below
+        // keep a copy of repaint_after - we will need it after full_ouput is out of scope
+        let repaint_after = full_output.repaint_after;
 
-        if output == Default::default() && clipped_net_shapes == self.last_visuals {
-            // No change - save bandwidth and send nothing
-        } else {
-            let frame_index = self.frame_index;
-            self.frame_index += 1;
+        // prepare a new frame for the client
+        let frame_index = self.frame_index;
+        self.frame_index += 1;
+        //eprintln!("Send frame {frame_index}");
 
-            let message = crate::ServerToClientMessage::Frame {
-                frame_index,
-                output,
-                clipped_net_shapes: clipped_net_shapes.clone(),
-                client_time,
-            };
+        // create a new glium
+        //use glium::glutin;
+        //let event_loop = glutin::event_loop::EventLoop::with_user_event();
+        //let ev = EventLoopBuilder::<T>::with_user_event().build();
+        //let display = create_display(&event_loop);
+        //let mut egui_glium = egui_glium::EguiGlium::new(&display, &event_loop);
 
-            self.last_visuals = clipped_net_shapes;
-            self.send_message(&message);
-        }
+        let clipped_primitives = self.egui_ctx.tessellate(full_output.clone().shapes);
+        let clipped_net_mesh = into_clipped_net_meshes(clipped_primitives);
+        let textures_delta = full_output.textures_delta.clone();
 
-        if needs_repaint {
-            // eprintln!("frame {} painted, needs_repaint", frame_index);
-            // Reschedule asap (don't wait for client) to request it.
-            self.input = Some(Default::default());
-        } else {
-            // eprintln!("frame {} painted", frame_index);
-        }
+        let message = crate::ServerToClientMessage::Frame {
+            frame_index,
+            platform_output: full_output.platform_output,
+            clipped_net_mesh: clipped_net_mesh.clone(),
+            //full_output,
+            textures_delta,
+            // replace clipped_net_shapes with meshes,
+            //clipped_net_shapes: clipped_primitives.clone(),
+            client_time,
+        };
+
+        self.last_visuals = clipped_net_mesh;
+        self.send_message(&message);
+
+        // if self.last_update.is_none() || self.last_update.unwrap().elapsed() > repaint_after {
+        //     //eprintln!("frame {} painted, needs_repaint", self.frame_index);
+        //     // Reschedule asap (don't wait for client) to request it.
+        //     self.new_input = Some(Default::default());
+        // } else {
+        //     //eprintln!("frame {} painted", self.frame_index);
+        // }
     }
 
     fn info(&self) -> String {
@@ -257,7 +291,7 @@ impl Client {
                     raw_input,
                     client_time,
                 } => {
-                    // eprintln!("Received new input");
+                    //eprintln!("{:?}", raw_input);
                     self.input(raw_input);
                     self.client_time = Some(client_time);
                     // keep polling for more messages
@@ -271,9 +305,9 @@ impl Client {
     }
 
     fn input(&mut self, new_input: RawInput) {
-        match &mut self.input {
+        match &mut self.new_input {
             None => {
-                self.input = Some(new_input);
+                self.new_input = Some(new_input);
             }
             Some(existing_input) => {
                 existing_input.append(new_input);

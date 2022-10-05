@@ -2,19 +2,18 @@
 use egui::epaint;
 
 /// `anti_alias=false` gives us around 23% savings in final bandwidth
-fn example_output(anti_alias: bool) -> (egui::Output, Vec<egui::ClippedMesh>) {
-    let mut ctx = egui::CtxRef::default();
-    ctx.memory().options.tessellation_options.anti_alias = anti_alias;
+fn example_output(anti_alias: bool) -> (egui::FullOutput, Vec<egui::ClippedPrimitive>) {
+    let mut ctx = egui::Context::default();
 
     let raw_input = egui::RawInput::default();
     let mut demo_windows = egui_demo_lib::DemoWindows::default();
-    let (output, shapes) = ctx.run(raw_input, |ctx| demo_windows.ui(ctx));
-    let clipped_meshes = ctx.tessellate(shapes);
+    let output = ctx.run(raw_input, |ctx| demo_windows.ui(ctx));
+    let clipped_meshes = ctx.tessellate(output.clone().shapes);
     (output, clipped_meshes)
 }
 
-fn example_shapes() -> (egui::Output, Vec<epaint::ClippedShape>) {
-    let mut ctx = egui::CtxRef::default();
+fn example_shapes() -> egui::FullOutput {
+    let mut ctx = egui::Context::default();
     let raw_input = egui::RawInput::default();
     let mut demo_windows = egui_demo_lib::DemoWindows::default();
     ctx.run(raw_input, |ctx| demo_windows.ui(ctx))
@@ -44,54 +43,45 @@ fn print_encodings<S: ?Sized + serde::Serialize>(data: &S) {
     // println!("zstd-21: {:>6.2} kB (too slow)", zstd_kb(&encoded, 21)); // way too slow
 }
 
-fn print_compressions(clipped_meshes: &[egui::ClippedMesh]) {
+fn print_compressions(clipped_meshes: &[egui::ClippedPrimitive]) {
     let mut num_vertices = 0;
     let mut num_indices = 0;
     let mut bytes_vertices = 0;
     let mut bytes_indices = 0;
-    for egui::ClippedMesh(_rect, mesh) in clipped_meshes {
-        num_vertices += mesh.vertices.len();
-        num_indices += mesh.indices.len();
-        bytes_vertices += mesh.vertices.len() * std::mem::size_of_val(&mesh.vertices[0]);
-        bytes_indices += mesh.indices.len() * std::mem::size_of_val(&mesh.indices[0]);
+    for egui::ClippedPrimitive {
+        clip_rect,
+        primitive,
+    } in clipped_meshes
+    {
+        // num_vertices += primitive.vertices.len();
+        // num_indices += primitive.indices.len();
+        // bytes_vertices += primitive.vertices.len() * std::mem::size_of_val(&primitive.vertices[0]);
+        // bytes_indices += primitive.indices.len() * std::mem::size_of_val(&primitive.indices[0]);
     }
-    let mesh_bytes = bytes_indices + bytes_vertices;
-    println!(
-        "vertices: {:>5}  {:>6.2} kb",
-        num_vertices,
-        bytes_vertices as f32 * 1e-3
-    );
-    println!(
-        "indices:  {:>5}  {:>6.2} kb",
-        num_indices,
-        bytes_indices as f32 * 1e-3
-    );
-    println!();
+    //     let mesh_bytes = bytes_indices + bytes_vertices;
+    //     println!(
+    //         "vertices: {:>5}  {:>6.2} kb",
+    //         num_vertices,
+    //         bytes_vertices as f32 * 1e-3
+    //     );
+    //     println!(
+    //         "indices:  {:>5}  {:>6.2} kb",
+    //         num_indices,
+    //         bytes_indices as f32 * 1e-3
+    //     );
+    //     println!();
 
-    let net_meshes: Vec<_> = clipped_meshes
-        .iter()
-        .map(|egui::ClippedMesh(rect, mesh)| (*rect, eterm::net_shape::NetMesh::from(mesh)))
-        .collect();
+    //     println!("raw:     {:>6.2} kB", mesh_bytes as f32 * 1e-3);
+    //     println!();
+    //     print_encodings(&clipped_meshes);
+    //     println!();
+    //     println!("Flattened mesh:");
+    //     print_encodings(&net_meshes);
+    //     println!();
+    //     println!("Quantized positions:");
+    //     print_encodings(&quantized_meshes);
 
-    let mut quantized_meshes = net_meshes.clone();
-    for (_, mesh) in &mut quantized_meshes {
-        for pos in &mut mesh.pos {
-            pos.x = quantize(pos.x);
-            pos.y = quantize(pos.y);
-        }
-    }
-
-    println!("raw:     {:>6.2} kB", mesh_bytes as f32 * 1e-3);
-    println!();
-    print_encodings(&clipped_meshes);
-    println!();
-    println!("Flattened mesh:");
-    print_encodings(&net_meshes);
-    println!();
-    println!("Quantized positions:");
-    print_encodings(&quantized_meshes);
-
-    // Other things I've tried: delta-encoded positions (5-10% worse).
+    //     // Other things I've tried: delta-encoded positions (5-10% worse).
 }
 
 fn main() {
@@ -108,12 +98,6 @@ fn main() {
     let (_, clipped_meshes) = example_output(false);
     println!("Antialiasing OFF:");
     print_compressions(&clipped_meshes);
-    println!();
-
-    let (_, shapes) = example_shapes();
-    let net_shapes = eterm::net_shape::to_clipped_net_shapes(shapes);
-    println!("Shapes:");
-    print_encodings(&net_shapes);
     println!();
 }
 

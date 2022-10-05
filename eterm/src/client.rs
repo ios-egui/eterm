@@ -1,13 +1,11 @@
+use crate::{ClientToServerMessage, EguiFrame, EtermFrame, ServerToClientMessage, TcpEndpoint};
+use egui::{text::Fonts, util::History, RawInput};
+use parking_lot::Mutex;
 use std::sync::{
     atomic::{AtomicBool, Ordering::SeqCst},
     mpsc::{self},
     Arc,
 };
-
-use egui::{text::Fonts, util::History, RawInput};
-use parking_lot::Mutex;
-
-use crate::{ClientToServerMessage, EguiFrame, ServerToClientMessage, TcpEndpoint};
 
 pub struct Client {
     addr: String,
@@ -18,7 +16,8 @@ pub struct Client {
 
     font_definitions: egui::FontDefinitions,
     fonts: Option<Fonts>,
-    latest_frame: Option<EguiFrame>,
+    latest_frame: Option<EtermFrame>,
+    latest_server_msg: Option<ClientToServerMessage>,
 
     bandwidth_history: Arc<Mutex<History<f32>>>,
     frame_size_history: Arc<Mutex<History<f32>>>,
@@ -56,6 +55,7 @@ impl Client {
             font_definitions: Default::default(),
             fonts: None,
             latest_frame: Default::default(),
+            latest_server_msg: None,
             bandwidth_history: bandwidth_history.clone(),
             frame_size_history: frame_size_history.clone(),
             latency_history: History::new(1..100, 1.0),
@@ -138,44 +138,22 @@ impl Client {
     /// Retrieved new events, and gives back what to do.
     ///
     /// Return `None` when there is nothing new.
-    pub fn update(&mut self, pixels_per_point: f32) -> Option<EguiFrame> {
-        if self.fonts.is_none() {
-            self.fonts = Some(Fonts::new(pixels_per_point, self.font_definitions.clone()));
-        }
-        let fonts = self.fonts.as_mut().unwrap();
-        if pixels_per_point != fonts.pixels_per_point() {
-            *fonts = Fonts::new(pixels_per_point, self.font_definitions.clone());
-        }
-
-        while let Ok(msg) = self.incoming_msg_rx.try_recv() {
+    pub fn update(&mut self, pixels_per_point: f32) -> Option<EtermFrame> {
+        if let Ok(msg) = self.incoming_msg_rx.try_recv() {
             match msg {
-                ServerToClientMessage::Fonts { font_definitions } => {
-                    self.font_definitions = font_definitions;
-                    *fonts = Fonts::new(pixels_per_point, self.font_definitions.clone());
-                }
                 ServerToClientMessage::Frame {
                     frame_index,
-                    output,
-                    clipped_net_shapes,
+                    platform_output,
+                    clipped_net_mesh,
                     client_time,
+                    textures_delta,
                 } => {
-                    let clipped_shapes =
-                        crate::net_shape::from_clipped_net_shapes(fonts, clipped_net_shapes);
-                    let tesselator_options =
-                        egui::epaint::tessellator::TessellationOptions::from_pixels_per_point(
-                            pixels_per_point,
-                        );
-                    let tex_size = fonts.font_image().size();
-                    let clipped_meshes = egui::epaint::tessellator::tessellate_shapes(
-                        clipped_shapes,
-                        tesselator_options,
-                        tex_size,
-                    );
-
-                    let latest_frame = self.latest_frame.get_or_insert_with(EguiFrame::default);
-                    latest_frame.frame_index = frame_index;
-                    latest_frame.output.append(output);
-                    latest_frame.clipped_meshes = clipped_meshes;
+                    self.latest_frame = Some(EtermFrame {
+                        frame_index,
+                        platform_output,
+                        clipped_net_mesh: clipped_net_mesh.clone(),
+                        textures_delta,
+                    });
 
                     if let Some(client_time) = client_time {
                         let rtt = (now() - client_time) as f32;
@@ -184,10 +162,9 @@ impl Client {
 
                     self.frame_history.add(now(), ());
                 }
+                m => eprintln!("ohter message"),
             }
         }
-
-        fonts.end_frame(); // make sure to evict galley cache
 
         self.bandwidth_history.lock().flush(now());
         self.frame_size_history.lock().flush(now());
@@ -195,13 +172,6 @@ impl Client {
         self.frame_history.flush(now());
 
         self.latest_frame.take()
-    }
-
-    pub fn font_image(&self) -> Arc<egui::FontImage> {
-        self.fonts
-            .as_ref()
-            .expect("Call update() first")
-            .font_image()
     }
 }
 

@@ -71,10 +71,13 @@
 #![allow(clippy::manual_range_contains)]
 
 mod client;
-pub mod net_shape;
+pub mod messages;
 mod server;
 
 pub use client::Client;
+use egui::{FullOutput, PlatformOutput};
+use messages::ClippedNetMesh;
+
 pub use server::{ClientId, Server};
 
 use std::sync::Arc;
@@ -99,8 +102,15 @@ pub type Packet = Arc<[u8]>;
 #[derive(Default)]
 pub struct EguiFrame {
     pub frame_index: u64,
-    pub output: egui::Output,
-    pub clipped_meshes: Vec<egui::ClippedMesh>,
+    pub platform_output: egui::FullOutput,
+    pub clipped_primitives: Vec<egui::ClippedPrimitive>,
+}
+#[derive(Default)]
+pub struct EtermFrame {
+    pub frame_index: u64,
+    pub platform_output: egui::PlatformOutput,
+    pub clipped_net_mesh: Vec<ClippedNetMesh>,
+    pub textures_delta: egui::TexturesDelta,
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -124,11 +134,10 @@ pub enum ServerToClientMessage {
     /// What to paint to screen.
     Frame {
         frame_index: u64,
-        output: egui::Output,
-        clipped_net_shapes: Vec<net_shape::ClippedNetShape>,
-        /// If this frame is a response to a `ClientToServerMessage::Input`.
-        /// Used to measure latency.
+        platform_output: PlatformOutput,
+        clipped_net_mesh: Vec<ClippedNetMesh>,
         client_time: Option<f64>,
+        textures_delta: egui::TexturesDelta,
     },
 }
 
