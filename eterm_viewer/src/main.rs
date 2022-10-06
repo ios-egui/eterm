@@ -66,16 +66,11 @@
 )]
 #![allow(clippy::float_cmp)]
 #![allow(clippy::manual_range_contains)]
-mod test;
 
-use std::time::Duration;
-
-use egui::{
-    epaint::{textures, Primitive},
-    ClippedPrimitive, FullOutput, Mesh, TexturesDelta,
-};
+use egui::{epaint::Primitive, ClippedPrimitive, FullOutput, Mesh};
 use eterm::{messages::ClippedNetMesh, EtermFrame};
 use glium::glutin;
+use std::time::Duration;
 
 /// We reserve this much space for eterm to show some stats.
 /// The rest is used for the view of the remove server.
