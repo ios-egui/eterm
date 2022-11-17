@@ -1,8 +1,34 @@
 use egui::{
-    epaint::{self, Color32, Pos2, Primitive, Rect, Stroke, TextureId},
+    epaint::{self, Color32, Pos2, Primitive, Rect, TextureId},
     ClippedPrimitive,
 };
 use serde::{Deserialize, Serialize};
+
+/// Optimized for transport over a network.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ClippedNetMesh {
+    pub clip_rect: Rect,
+    pub mesh: NetMesh,
+}
+
+pub fn into_clipped_net_meshes(primitives: Vec<ClippedPrimitive>) -> Vec<ClippedNetMesh> {
+    primitives
+        .into_iter()
+        .map(to_clipped_net_mesh)
+        .flatten()
+        .collect()
+}
+
+pub fn to_clipped_net_mesh(p: ClippedPrimitive) -> Option<ClippedNetMesh> {
+    if let Primitive::Mesh(m) = p.primitive {
+        Some(ClippedNetMesh {
+            clip_rect: p.clip_rect,
+            mesh: (&m).into(),
+        })
+    } else {
+        None
+    }
+}
 
 /// Like [`epaint::Mesh`], but optimized for transport over a network.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -37,31 +63,3 @@ impl From<&NetMesh> for epaint::Mesh {
         }
     }
 }
-
-// ---------------------------------------------------------------------------
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct ClippedNetMesh {
-    pub clip_rect: Rect,
-    pub mesh: NetMesh,
-}
-
-pub fn into_clipped_net_meshes(primitives: Vec<ClippedPrimitive>) -> Vec<ClippedNetMesh> {
-    primitives
-        .into_iter()
-        .map(to_clipped_net_mesh)
-        .flatten()
-        .collect()
-}
-
-pub fn to_clipped_net_mesh(p: ClippedPrimitive) -> Option<ClippedNetMesh> {
-    if let Primitive::Mesh(m) = p.primitive {
-        Some(ClippedNetMesh {
-            clip_rect: p.clip_rect,
-            mesh: (&m).into(),
-        })
-    } else {
-        None
-    }
-}
-
-// ----------------------------------------------------------------------------

@@ -1,8 +1,8 @@
 [package]
 name = "eterm_viewer"
-version = "0.0.1"
+version = "0.0.2"
 edition = "2021"
-rust-version = "1.56"
+rust-version = "1.66"
 authors = ["Emil Ernerfeldt <emil.ernerfeldt@gmail.com>"]
 description = "Remove viewer for eterm, a visual terminal for egui"
 homepage = "https://github.com/emilk/eterm"
@@ -22,10 +22,12 @@ include = [
 all-features = true
 
 [dependencies]
-argh = "0.1.6"
-egui = "0.19.0"
-egui_glium = "0.19.0"
-eterm = { version = "0.0.1", path = "../eterm" }
-glium = "0.32.1"
+egui = {workspace = true}
+egui_glium = {workspace = true}
+glium = {workspace = true}
+eterm = {path = "../eterm"}
+
+argh = "0.1"
 tracing = "0.1"
 tracing-subscriber = "0.3"
+

@@ -67,17 +67,12 @@
 #![allow(clippy::float_cmp)]
 #![allow(clippy::manual_range_contains)]
 
-use egui::{epaint::Primitive, ClippedPrimitive, FullOutput, Mesh};
+use egui::{epaint::Primitive, ClippedPrimitive, Mesh};
 use eterm::{messages::ClippedNetMesh, EtermFrame};
-use glium::glutin;
-use std::time::Duration;
+use glium::glutin::{self, event_loop::EventLoopBuilder};
 
-/// We reserve this much space for eterm to show some stats.
-/// The rest is used for the view of the remove server.
-const TOP_BAR_HEIGHT: f32 = 0.0; //24.0;
-
-/// Repaint every so often to check connection status etc.
-const MIN_REPAINT_INTERVAL: std::time::Duration = std::time::Duration::from_secs(1);
+/// Color to clear the canvas before painting a frame
+const CLEAR_COLOR: egui::Rgba = egui::Rgba::from_rgb(0.5, 0.3, 0.2);
 
 /// eterm viewer viewer.
 ///
@@ -94,61 +89,54 @@ fn main() {
     tracing_subscriber::fmt::init();
 
     let opt: Arguments = argh::from_env();
-    let mut client = eterm::Client::new(opt.url);
-
-    let event_loop = glutin::event_loop::EventLoop::with_user_event();
+    let event_loop = EventLoopBuilder::with_user_event().build();
     let display = create_display(&event_loop);
-
     let mut egui_glium = egui_glium::EguiGlium::new(&display, &event_loop);
-
+    let pixels_per_point = 4.0; //egui_glium.egui_winit.pixels_per_point();
     let mut last_sent_input = None;
+    let mut last_frame_index = 0;
 
-    let mut last_received_clipped_new_mesh: Vec<ClippedNetMesh> = vec![];
-    let mut last_received_texture_delta = Default::default();
-    let mut last_received_frame_index = 0;
-    let mut last_received_full_output = FullOutput::default();
-
-    let mut last_clipped_primitives = vec![];
-    let mut local_repaint_after = Duration::from_secs(5);
-    let received_repaint_after = Duration::from_millis(5);
-
-    let mut last_repaint = std::time::Instant::now();
-
-    let pixels_per_point = 2.0; //egui_glium.egui_winit.pixels_per_point();
-
-    // work_arround_to_init_fonts
+    let mut client = eterm::Client::new(opt.url);
+    // work arround for init of fonts
     {
-        client.update(pixels_per_point);
+        client.update();
 
-        let raw_input = egui_glium
+        let mut raw_input = egui_glium
             .egui_winit
             .take_egui_input(display.gl_window().window());
+
+        raw_input.pixels_per_point = Some(pixels_per_point);
+
         client.send_input(raw_input.clone());
 
         let _ = egui_glium.egui_ctx.run(raw_input, |egui_ctx| {
             egui::SidePanel::left("").show(egui_ctx, |_| {});
         });
     }
-
+    // This event loop might send the user input (e.g. mouse movement) 100 times a second
+    // and the server might send new frames at a rate of 30 times a second.
+    // Thus the frame rate is dictated by the server but the user input update rate is dictated
+    // by this event_loop.
     event_loop.run(move |event, _, control_flow| {
         let mut redraw = || {
-            // get input from viewer
-            let raw_input = egui_glium
+            // Get input from viewer
+            let mut raw_input = egui_glium
                 .egui_winit
                 .take_egui_input(display.gl_window().window());
+            raw_input.pixels_per_point = Some(pixels_per_point);
 
-            // send input to server
+            // Send input to server
             let input_changed = last_sent_input.as_ref() != Some(&raw_input);
             if input_changed {
                 client.send_input(raw_input.clone());
                 last_sent_input = Some(raw_input.clone());
             }
 
-            // check if server has sent something to draw
-            let new_frame_option = client.update(pixels_per_point);
+            // Check if server has sent a new frame
+            let new_frame = client.update();
 
-            // if there is a new frame, paint it
-            if let Some(frame) = new_frame_option {
+            // Always paint a frame rate when there is one
+            if let Some(frame) = new_frame {
                 let EtermFrame {
                     frame_index,
                     platform_output,
@@ -156,44 +144,36 @@ fn main() {
                     textures_delta,
                 } = frame;
 
+                last_frame_index = frame_index;
+
                 egui_glium.egui_winit.handle_platform_output(
                     display.gl_window().window(),
                     &egui_glium.egui_ctx,
                     platform_output,
                 );
 
-                // save the server primitives for use later on
-                last_received_frame_index = frame_index;
-                last_received_clipped_new_mesh = clipped_net_mesh;
-                last_received_texture_delta = textures_delta;
+                // paint the frame from the server:
+                use glium::Surface as _;
+                let mut target = display.draw();
 
-                if true
-                    || last_repaint.elapsed() >= received_repaint_after
-                    || last_repaint.elapsed() >= MIN_REPAINT_INTERVAL
-                    || last_repaint.elapsed() >= local_repaint_after
-                {
-                    // paint the server ui - with the last received primitives
-                    use glium::Surface as _;
-                    let mut target = display.draw();
+                target.clear_color(
+                    CLEAR_COLOR[0],
+                    CLEAR_COLOR[1],
+                    CLEAR_COLOR[2],
+                    CLEAR_COLOR[3],
+                );
 
-                    let cc = egui::Rgba::from_rgb(0.5, 0.3, 0.2);
-                    target.clear_color(cc[0], cc[1], cc[2], cc[3]);
+                let clipped_primitives = into_clipped_primitives(clipped_net_mesh);
 
-                    let clipped_primitives =
-                        into_clipped_primitives(last_received_clipped_new_mesh.clone());
+                egui_glium.painter.paint_and_update_textures(
+                    &display,
+                    &mut target,
+                    pixels_per_point,
+                    &clipped_primitives,
+                    &textures_delta,
+                );
 
-                    last_clipped_primitives = clipped_primitives.clone();
-
-                    egui_glium.painter.paint_and_update_textures(
-                        &display,
-                        &mut target,
-                        pixels_per_point,
-                        &clipped_primitives,
-                        &last_received_texture_delta,
-                    );
-
-                    target.finish().unwrap();
-                }
+                target.finish().unwrap();
             }
 
             display.gl_window().window().request_redraw();

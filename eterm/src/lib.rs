@@ -73,13 +73,10 @@
 mod client;
 pub mod messages;
 mod server;
-
 pub use client::Client;
-use egui::{FullOutput, PlatformOutput};
+use egui::PlatformOutput;
 use messages::ClippedNetMesh;
-
-pub use server::{ClientId, Server};
-
+pub use server::{ClientId, Server, DEFAULT_MAX_UPDATE_INTERVAL, DEFAULT_MIN_UPDATE_INTERVAL};
 use std::sync::Arc;
 
 /// All TCP packets are prefixed with this.
@@ -105,6 +102,7 @@ pub struct EguiFrame {
     pub platform_output: egui::FullOutput,
     pub clipped_primitives: Vec<egui::ClippedPrimitive>,
 }
+
 #[derive(Default)]
 pub struct EtermFrame {
     pub frame_index: u64,
@@ -125,12 +123,6 @@ pub enum ClientToServerMessage {
 
 #[derive(serde::Serialize, serde::Deserialize)]
 pub enum ServerToClientMessage {
-    /// Sent first to all clients so they know how to paint
-    /// the [`crate::net_shape::NetShape`]:s.
-    Fonts {
-        font_definitions: egui::FontDefinitions,
-    },
-
     /// What to paint to screen.
     Frame {
         frame_index: u64,

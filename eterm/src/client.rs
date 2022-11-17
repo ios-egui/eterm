@@ -1,5 +1,5 @@
-use crate::{ClientToServerMessage, EguiFrame, EtermFrame, ServerToClientMessage, TcpEndpoint};
-use egui::{text::Fonts, util::History, RawInput};
+use crate::{ClientToServerMessage, EtermFrame, ServerToClientMessage, TcpEndpoint};
+use egui::{util::History, RawInput};
 use parking_lot::Mutex;
 use std::sync::{
     atomic::{AtomicBool, Ordering::SeqCst},
@@ -13,12 +13,7 @@ pub struct Client {
     alive: Arc<AtomicBool>,
     outgoing_msg_tx: mpsc::Sender<ClientToServerMessage>,
     incoming_msg_rx: mpsc::Receiver<ServerToClientMessage>,
-
-    font_definitions: egui::FontDefinitions,
-    fonts: Option<Fonts>,
     latest_frame: Option<EtermFrame>,
-    latest_server_msg: Option<ClientToServerMessage>,
-
     bandwidth_history: Arc<Mutex<History<f32>>>,
     frame_size_history: Arc<Mutex<History<f32>>>,
     latency_history: History<f32>,
@@ -52,10 +47,7 @@ impl Client {
             alive: alive.clone(),
             outgoing_msg_tx,
             incoming_msg_rx,
-            font_definitions: Default::default(),
-            fonts: None,
             latest_frame: Default::default(),
-            latest_server_msg: None,
             bandwidth_history: bandwidth_history.clone(),
             frame_size_history: frame_size_history.clone(),
             latency_history: History::new(1..100, 1.0),
@@ -111,6 +103,7 @@ impl Client {
             .send(ClientToServerMessage::Input {
                 raw_input,
                 client_time: now(),
+                //points_per_pixel: self.points_per_pixel,
             })
             .ok();
     }
@@ -138,7 +131,7 @@ impl Client {
     /// Retrieved new events, and gives back what to do.
     ///
     /// Return `None` when there is nothing new.
-    pub fn update(&mut self, pixels_per_point: f32) -> Option<EtermFrame> {
+    pub fn update(&mut self) -> Option<EtermFrame> {
         if let Ok(msg) = self.incoming_msg_rx.try_recv() {
             match msg {
                 ServerToClientMessage::Frame {
@@ -162,7 +155,6 @@ impl Client {
 
                     self.frame_history.add(now(), ());
                 }
-                m => eprintln!("ohter message"),
             }
         }
 
@@ -206,6 +198,8 @@ fn run(
         while let Some(packet) = tcp_endpoint.try_receive_packet().context("receive")? {
             bandwidth_history.lock().add(now(), packet.len() as f32);
             let message = crate::decode_message(&packet).context("decode")?;
+
+            #[allow(irrefutable_let_patterns)]
             if let ServerToClientMessage::Frame { .. } = &message {
                 frame_size_history.lock().add(now(), packet.len() as f32);
             }

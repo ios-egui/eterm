@@ -1,6 +1,6 @@
 use crate::{
     messages::{into_clipped_net_meshes, ClippedNetMesh},
-    ClientToServerMessage,
+    ClientToServerMessage, ServerToClientMessage,
 };
 use anyhow::Context as _;
 use egui::RawInput;
@@ -9,8 +9,11 @@ use std::{
     net::{SocketAddr, TcpListener},
     time::{Duration, Instant},
 };
-const DEFAULT_RESPONSE_TIME: Duration = Duration::from_millis(1000);
-const DEFAULT_UPDATE_INTERVAL: Duration = Duration::from_secs(1);
+
+// Respond to user input with a maximum 60 frames per second
+pub const DEFAULT_MAX_UPDATE_INTERVAL: Duration = Duration::from_millis(1000 / 60);
+// Send at least 1 frame per second
+pub const DEFAULT_MIN_UPDATE_INTERVAL: Duration = Duration::from_secs(1);
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub struct ClientId(u64);
@@ -37,7 +40,7 @@ impl Server {
             next_client_id: 0,
             tcp_listener,
             clients: Default::default(),
-            minimum_update_interval: DEFAULT_UPDATE_INTERVAL,
+            minimum_update_interval: DEFAULT_MIN_UPDATE_INTERVAL,
         })
     }
 
@@ -93,9 +96,9 @@ impl Server {
                             new_input: None,
                             //prev_input: None,
                             last_client_time: None,
-                            last_update: Instant::now() - DEFAULT_UPDATE_INTERVAL,
+                            last_update: Instant::now() - DEFAULT_MIN_UPDATE_INTERVAL,
                             last_visuals: Default::default(),
-                            max_response_time: DEFAULT_RESPONSE_TIME,
+                            max_update_interval: DEFAULT_MAX_UPDATE_INTERVAL,
                         }
                     });
 
@@ -133,11 +136,11 @@ struct Client {
     egui_ctx: egui::Context,
     /// Set when there is something to do. Cleared after painting.
     new_input: Option<egui::RawInput>,
-    /// The client's time of the last input we got from them.
+    /// The client's time of the last input.
     last_client_time: Option<f64>,
     last_update: std::time::Instant,
     last_visuals: Vec<ClippedNetMesh>,
-    max_response_time: Duration,
+    max_update_interval: Duration,
 }
 
 impl Client {
@@ -146,7 +149,12 @@ impl Client {
         self.last_visuals = Default::default();
     }
 
-    // show is called every update-interval (e.g. 60 time per sec) from the server's main loop
+    // Show is called from the app's main loop (e.g. 60 time per sec),
+    // but new frames are only build and send to the eterm client every
+    // Client.max_update_interval or less when there is no new input.
+    // Input sent by the client is continously collected in the backgound
+    // and kept in Client.new_input. No input is lost, even if the
+    // max_update_interval is set to a high number.
     fn show(
         &mut self,
         do_ui: &mut dyn FnMut(&egui::Context, ClientId),
@@ -157,23 +165,30 @@ impl Client {
             return;
         }
 
-        // Skip update if not strictly needed - to preserve bandwidth
-        let server_wants_update = self.last_update.elapsed() >= minimum_update_interval;
-        let client_wants_response =
-            self.new_input.is_some() && self.last_update.elapsed() >= self.max_response_time;
-        if !server_wants_update || !client_wants_response {
-            return;
-        }
+        let minimum_interval_has_passed = self.last_update.elapsed() >= minimum_update_interval;
+        let input_triggered_update =
+            self.new_input.is_some() && self.last_update.elapsed() >= self.max_update_interval;
 
+        if minimum_interval_has_passed || input_triggered_update {
+            let message = self.create_frame(do_ui);
+            self.send_message(&message);
+        }
+    }
+
+    // Create a frame for the client
+    fn create_frame(
+        &mut self,
+        do_ui: &mut dyn FnMut(&egui::Context, ClientId),
+    ) -> ServerToClientMessage {
         // Reset instant of last update
         self.last_update = Instant::now();
 
         // Take accumulated input
-        let mut input = self.new_input.take().unwrap();
-        input.pixels_per_point = Some(2.0);
-        //eprintln!("Received input: {:?}", input);
+        let mut input = self.new_input.take().unwrap_or_default();
+        eprintln!("pixels_per_point = {:?}", input.pixels_per_point);
+        //input.pixels_per_point = Some(2.0);
 
-        // Override client time of the input with server time
+        // Override client time with server time
         input.time = Some(self.start_time.elapsed().as_secs_f64());
 
         // Refresh egui
@@ -181,46 +196,22 @@ impl Client {
             .egui_ctx
             .run(input, |egui_ctx| do_ui(egui_ctx, self.client_id));
 
-        // tesselate shapes to network friendly primitives
+        // tesselate shapes
         let clipped_primitives = self.egui_ctx.tessellate(full_output.clone().shapes);
         let clipped_net_mesh = into_clipped_net_meshes(clipped_primitives);
         let textures_delta = full_output.textures_delta.clone();
 
-        //let clipped_shapes = &full_output.shapes;
-        //let clipped_net_shapes = crate::net_shape::to_clipped_net_shapes(clipped_shapes.clone());
-        // keep a copy of repaint_after - we will need it after full_ouput is out of scope
-        //let repaint_after = full_output.repaint_after;
-
         // Prepare a new frame for the client
         let frame_index = self.frame_index;
         self.frame_index += 1;
-        //eprintln!("Send frame {frame_index}");
 
-        // create a new glium
-        //use glium::glutin;
-        //let event_loop = glutin::event_loop::EventLoop::with_user_event();
-        //let ev = EventLoopBuilder::<T>::with_user_event().build();
-        //let display = create_display(&event_loop);
-        //let mut egui_glium = egui_glium::EguiGlium::new(&display, &event_loop);
-        // Take most recently received client time (from Client)
-
-        // Send frame
-        let message = crate::ServerToClientMessage::Frame {
+        crate::ServerToClientMessage::Frame {
             frame_index,
             platform_output: full_output.platform_output,
             clipped_net_mesh,
             textures_delta,
             client_time: self.last_client_time.take(),
-        };
-        self.send_message(&message);
-
-        // if self.last_update.is_none() || self.last_update.unwrap().elapsed() > repaint_after {
-        //     //eprintln!("frame {} painted, needs_repaint", self.frame_index);
-        //     // Reschedule asap (don't wait for client) to request it.
-        //     self.new_input = Some(Default::default());
-        // } else {
-        //     //eprintln!("frame {} painted", self.frame_index);
-        // }
+        }
     }
 
     fn info(&self) -> String {
@@ -272,10 +263,12 @@ impl Client {
                 ClientToServerMessage::Input {
                     raw_input,
                     client_time,
+                    //points_per_pixel,
                 } => {
                     //eprintln!("{:?}", raw_input);
                     self.append_input(raw_input);
                     self.last_client_time = Some(client_time);
+                    //self.points_per_pixel = points_per_pixel;
                     // keep polling for more messages
                 }
                 ClientToServerMessage::Goodbye => {
