@@ -185,8 +185,6 @@ impl Client {
 
         // Take accumulated input
         let mut input = self.new_input.take().unwrap_or_default();
-        eprintln!("pixels_per_point = {:?}", input.pixels_per_point);
-        //input.pixels_per_point = Some(2.0);
 
         // Override client time with server time
         input.time = Some(self.start_time.elapsed().as_secs_f64());
