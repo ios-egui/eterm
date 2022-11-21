@@ -5,25 +5,10 @@ members = [
     "eterm_viewer",
 ]
 
-[patch.crates-io]
-# egui = { path = "../egui/egui" }
-# egui_demo_lib = { path = "../egui/egui_demo_lib" }
-# egui_glium = { path = "../egui/egui_glium" }
-# egui = { git = "https://github.com/emilk/egui", branch = "master" }
-# egui_demo_lib = { git = "https://github.com/emilk/egui", branch = "master" }
-# egui_glium = { git = "https://github.com/emilk/egui", branch = "master" }
-
-
-
 [workspace.dependencies]
-# egui = {path = "../egui/crates/egui/", features = ["serde"]}
 egui = { git = "https://github.com/emilk/egui", branch = "master", features = ["serde"] }
-
-# egui_glium = {path = "../egui/crates/egui_glium"}
 egui_glium = { git = "https://github.com/emilk/egui", branch = "master" }
-
 egui_demo_lib = { git = "https://github.com/emilk/egui", branch = "master", features = ["serde"] }
-
 glium = "0.32"
 
 
