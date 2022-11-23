@@ -80,6 +80,6 @@ jobs:
       - uses: actions-rs/toolchain@v1
         with:
           profile: minimal
-          toolchain: 1.56.1
+          toolchain: 1.65
           override: true
       - run: cargo doc -p eterm --lib --no-deps --all-features
