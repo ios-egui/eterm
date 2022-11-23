@@ -30,7 +30,7 @@ pub fn to_clipped_net_mesh(p: ClippedPrimitive) -> Option<ClippedNetMesh> {
 }
 
 /// Like [`epaint::Mesh`], but optimized for transport over a network.
-#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct NetMesh {
     pub texture_id: TextureId,
     pub indices: Vec<u32>,
