@@ -144,7 +144,7 @@ impl Client {
                     self.latest_frame = Some(EtermFrame {
                         frame_index,
                         platform_output,
-                        clipped_net_mesh: clipped_net_mesh.clone(),
+                        clipped_net_mesh,
                         textures_delta,
                     });
 

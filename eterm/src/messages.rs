@@ -14,8 +14,7 @@ pub struct ClippedNetMesh {
 pub fn into_clipped_net_meshes(primitives: Vec<ClippedPrimitive>) -> Vec<ClippedNetMesh> {
     primitives
         .into_iter()
-        .map(to_clipped_net_mesh)
-        .flatten()
+        .filter_map(to_clipped_net_mesh)
         .collect()
 }
 

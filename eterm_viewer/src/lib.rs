@@ -51,7 +51,7 @@ pub fn run(url: String) {
             let input_changed = last_sent_input.as_ref() != Some(&raw_input);
             if input_changed {
                 client.send_input(raw_input.clone());
-                last_sent_input = Some(raw_input.clone());
+                last_sent_input = Some(raw_input);
             }
 
             // Check if server has sent a new frame
